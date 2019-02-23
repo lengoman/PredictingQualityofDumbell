@@ -1,0 +1,150 @@
+---
+title: 'Predicting Quality of Dumbell Lifts - different approach'
+author: "Ivan Arambula"
+date: "February 21, 2019"
+output:
+  html_document: 
+    keep_md: yes
+  pdf_document: default
+---
+
+####Background:
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves. In this project, my goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
+
+####Task:
+
+The focus of this task is to use machine learning to predict which one of the 5 ways (the classe variable in the dataset) the barbell lift falls under. This would help to find the best ways to lift barbells. For this task we are going to use the training and test dataset provided in the assignment.
+
+---
+###Setup
+
+We need to load the libraries and download the datasets. By exploring the dataset is possible to see that there are some values like "#DIV/0!" that need to be converted to NA while loading the dataset.
+
+As the process can take quite sometime, We are goint to use the 6 cores of the machine
+
+```{r, loadingData, cache=TRUE}
+library(caret)
+#library(doMC)
+#registerDoMC(cores = 6)
+set.seed(107484)
+
+#Download data
+Train <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", na.strings=c("#DIV/0!"), row.names = 1)
+Test <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", na.strings=c("#DIV/0!"), row.names = 1)
+```
+
+---
+
+####Data Exploration
+
+Continuing the Data exploration, we can see that there are many variables that cannot be used, some are redundand and some have null values, we are going to clear some of the NA colums, in this case about 75%. The num_window variable and classe have seems to have a correlation. 
+
+---
+
+####Pre Processing
+
+First and very important is to partition the data 80% Training and 20% Validation, why at the beginning? Because this can help us to reduce the ammount of data and can prevent memory overfloating while running any algorithm.
+
+```{r, creatingPartitions, results='hide'}
+library(caret)
+#Creating partitions first to reduce the amount of data
+
+trainset <- createDataPartition(Train$classe, p=0.8, list=FALSE)
+Training <- Train[trainset,]
+Validation <- Train[-trainset,]
+```
+
+Then we are going to use caret function nearZeroVar to remove all the columns where values are almost 0. After that we need to find the size of all the non numbers or empty values and create a filter, in this case 75% is a good amount to keep for our sample.
+
+Once the filter provide us with the null.cols, we need to exclude all the description columns.
+
+```{r, filteringColumns, results='hide'}
+Training <- Training[,-nearZeroVar(Training)]
+filter.size.NA.empty <- sapply(Training, function(x) {
+     sum(!(is.na(x) | x == ""))
+})
+
+null.cols <- names(filter.size.NA.empty[filter.size.NA.empty < 0.75 * length(Training$classe)])
+description.cols <- c("X", "user_name", "raw_timestamp_part_1", "raw_timestamp_part_2", 
+                     "cvtd_timestamp", "new_window", "num_window")
+exclude.cols <- c(description.cols, null.cols)
+
+Training <- Training[, !names(Training) %in% exclude.cols]
+```
+
+## Model training
+
+###Random Forest
+
+```{r, rfTraining ,cache=TRUE}
+rf.Model <- train(classe ~ ., Training, method= 'rf', trainControl=trainControl(method='cv',number=10), preprocess=c('center','scale'))
+```
+
+
+For this particular exercise we are going to use random forest, the decision was made based on the high accuracy that this algorithm presents when there are no many records in our sample. We can leave the machine doing 10 cross validations and preprocess using center and scale for determine how are we are going to substract the average and divide by the standard deviation.
+
+
+Time to check our accuracy
+
+```{r, predictTraining, dependson="rfTraining"}
+#Training set accuracy
+predict.training <- predict(rf.Model, Training)
+print(confusionMatrix(predict.training, Training$classe))
+```
+
+#Validation set accuracy (Our-of-Sample)
+```{r, validationAccuracy}
+predict.validation <- predict(rf.Model, Validation)
+print(confusionMatrix(predict.validation, Validation$classe))
+```
+
+# Test prediction
+```{r, testPrediction}
+predict.test <- predict(rf.Model, Test)
+predict.test
+```
+
+# Feature Importance
+
+```{r, featureImportance}
+library(plyr)
+imp.vars <- varImp(rf.Model$finalModel)
+var.names <- rownames(imp.vars)
+var.orders <- data.frame(varnames=var.names,imp.vars)
+var.orders <- arrange(var.orders, desc(Overall))
+
+ggplot(var.orders, aes(x=reorder(var.names,desc(Overall)),y=Overall, fill=Overall)) + 
+    geom_bar(stat="identity") + theme(legend.position="none")+
+    xlab("Features") + guides(fill=FALSE)+
+    ylab("Importance") + ggtitle("Features Importance")+
+    theme(axis.text.x=element_text(angle=65,hjust=1)) + 
+    theme(plot.title = element_text(size=14, face="bold")) 
+```
+
+##Model Selection
+
+Random forest has a very high and accurary, this is because it iterates multiple times and navigates over diferent branches for finding the best value. PCA in this occasion was not as good, there are multiple factors than can affect PCA algorithms in this case it was the ammount of columns that we have choosen.
+
+
+###Model Evaluation
+My model against the validation set has a 100% accuracy. 
+
+These are the final values for all the model's result on cross validation:
+
+```{r}
+rf.Model$finalModel
+rf.Model$bestTune
+rf.Model$results
+```
+
+###Conclusion
+Based on our results we can conclude the following:
+
+- Is important to do a good cleanup to remove all the NA and Zero Variable columns
+- Partition at the beginning allow us to improve the performance on our training, however most of the time the filters have to be done first.
+- Random Forest is great for working with datasets with large volume of variables, however my laptop got super warm and it was almost a cooking pan, but at the end it exceeds my expectations.
+- And for the result the feauture variable that give us the most relevant data was the Roll_belt 
+
+
+
